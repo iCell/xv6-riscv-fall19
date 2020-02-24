@@ -13,16 +13,28 @@
 
 #define MAXARGS 10
 
+// Command struct, which type followes the defined macros
 struct cmd {
   int type;
 };
 
+// `type` indicates that what kind of command it is;
+// `argv` lists all arguments pointer, each pointer
+// points to the begining of the argument string;
+// and each of `eargv`'s pointer points to the end of 
+// the argument string
 struct execcmd {
   int type;
   char *argv[MAXARGS];
   char *eargv[MAXARGS];
 };
 
+// redircmd stands for IO redirection command
+// the `cmd` struct stands for the actual command to execute;
+// `file` points to the begining of the file name string and
+// `efile` points to the end of the file name string.
+// `mode` means how to open the file;
+// `fd` simply stands for the file descriptor ;
 struct redircmd {
   int type;
   struct cmd *cmd;
@@ -32,18 +44,24 @@ struct redircmd {
   int fd;
 };
 
+// pipecmd stands for pipeline command
+// the `left` command writes to the standard output
+// and the `right` command reads from the standard input
 struct pipecmd {
   int type;
   struct cmd *left;
   struct cmd *right;
 };
-
+ 
+// multiply commands can join with a symbol ";" to  become a single command
+// the parsed commands will execute one by one；
 struct listcmd {
   int type;
   struct cmd *left;
   struct cmd *right;
 };
 
+// if command ends of symbol "&", the command will execute in background.
 struct backcmd {
   int type;
   struct cmd *cmd;
@@ -81,6 +99,7 @@ runcmd(struct cmd *cmd)
 
   case REDIR:
     rcmd = (struct redircmd*)cmd;
+    // must close rcmd's fd to ensure file will opened using the lowest fd.
     close(rcmd->fd);
     if(open(rcmd->file, rcmd->mode) < 0){
       fprintf(2, "open %s failed\n", rcmd->file);
@@ -103,6 +122,7 @@ runcmd(struct cmd *cmd)
       panic("pipe");
     if(fork1() == 0){
       close(1);
+      // runcmd will write to duplicated p[1]
       dup(p[1]);
       close(p[0]);
       close(p[1]);
@@ -110,6 +130,7 @@ runcmd(struct cmd *cmd)
     }
     if(fork1() == 0){
       close(0);
+      // runcmd will read from duplicated p[0]
       dup(p[0]);
       close(p[0]);
       close(p[1]);
@@ -149,6 +170,7 @@ main(void)
 
   // Ensure that three file descriptors are open.
   while((fd = open("console", O_RDWR)) >= 0){
+    // if all the file descriptors work fine, the new fd should always greater than or equal 3
     if(fd >= 3){
       close(fd);
       break;
@@ -262,6 +284,11 @@ backcmd(struct cmd *subcmd)
 char whitespace[] = " \t\r\n\v";
 char symbols[] = "<|>&;()";
 
+// get command string or the redirect file name.
+// q stands for the begining of the string and eq points to the end.
+// if get the character contained one of the `!();&<>`, simply move the
+// pointer to the next character.
+// If gives value of ret a `a`, then it means this is a basic command 
 int
 gettoken(char **ps, char *es, char **q, char **eq)
 {
@@ -307,6 +334,12 @@ gettoken(char **ps, char *es, char **q, char **eq)
   return ret;
 }
 
+// `ps` stands for the begining of the string, and `es` stands for 
+// the end of the string.
+// `peek()` function will move the begining of the string to the first
+// character which is not whitespace.
+// Also it will return true or false which means wether the first character of
+// the given string starts with character within the `toks` list
 int
 peek(char **ps, char *es, char *toks)
 {
@@ -330,6 +363,8 @@ parsecmd(char *s)
   char *es;
   struct cmd *cmd;
 
+  // s stands for the begining of the string,
+  // es stands for the end of the string
   es = s + strlen(s);
   cmd = parseline(&s, es);
   peek(&s, es, "");
@@ -346,6 +381,7 @@ parseline(char **ps, char *es)
 {
   struct cmd *cmd;
 
+  // Separate commands to pipeline commands first
   cmd = parsepipe(ps, es);
   while(peek(ps, es, "&")){
     gettoken(ps, es, 0, 0);
@@ -353,11 +389,21 @@ parseline(char **ps, char *es)
   }
   if(peek(ps, es, ";")){
     gettoken(ps, es, 0, 0);
+    // separate commands by symbol ";" recursively
+    // eg: echo hello;echo world;echo haha
     cmd = listcmd(cmd, parseline(ps, es));
   }
   return cmd;
 }
 
+// a | b | c | d
+// grep fork sh.c | wc -l
+// Child process creates a pipe to connect the left end of the pipeline with the
+// right end. Then it calls `fork` and `runcmd` for the left end of the pipeline
+// and `fork` and `runcmd` for the right end of the pipeline, and waits for both
+// to finish.
+// The right end of the pipeline may be a command that includes a pipe(eg: a | b | c)
+// the code should create a tree of processes recurcively.
 struct cmd*
 parsepipe(char **ps, char *es)
 {
@@ -371,6 +417,9 @@ parsepipe(char **ps, char *es)
   return cmd;
 }
 
+// check if there is a redirect symbol such as ">" or "<" contained in
+// the command. If the answer is yes, then convert original command to
+// redirect command
 struct cmd*
 parseredirs(struct cmd *cmd, char **ps, char *es)
 {
@@ -420,6 +469,7 @@ parseexec(char **ps, char *es)
   struct execcmd *cmd;
   struct cmd *ret;
 
+  // if the string starts with "(", then should treat it as a block.
   if(peek(ps, es, "("))
     return parseblock(ps, es);
 
@@ -438,6 +488,7 @@ parseexec(char **ps, char *es)
     argc++;
     if(argc >= MAXARGS)
       panic("too many args");
+    // check if there a redirect symbol contained in the parsed command
     ret = parseredirs(ret, ps, es);
   }
   cmd->argv[argc] = 0;
@@ -446,6 +497,7 @@ parseexec(char **ps, char *es)
 }
 
 // NUL-terminate all the counted strings.
+// It simply adds `\0` to the end of the command string.
 struct cmd*
 nulterminate(struct cmd *cmd)
 {
@@ -465,25 +517,21 @@ nulterminate(struct cmd *cmd)
     for(i=0; ecmd->argv[i]; i++)
       *ecmd->eargv[i] = 0;
     break;
-
   case REDIR:
     rcmd = (struct redircmd*)cmd;
     nulterminate(rcmd->cmd);
     *rcmd->efile = 0;
     break;
-
   case PIPE:
     pcmd = (struct pipecmd*)cmd;
     nulterminate(pcmd->left);
     nulterminate(pcmd->right);
     break;
-
   case LIST:
     lcmd = (struct listcmd*)cmd;
     nulterminate(lcmd->left);
     nulterminate(lcmd->right);
     break;
-
   case BACK:
     bcmd = (struct backcmd*)cmd;
     nulterminate(bcmd->cmd);
