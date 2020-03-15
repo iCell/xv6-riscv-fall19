@@ -16,7 +16,8 @@
 struct devsw devsw[NDEV];
 struct {
   struct spinlock lock;
-  struct file file[NFILE];
+  // struct file file[NFILE];
+  struct file *file;
 } ftable;
 
 void
@@ -29,18 +30,25 @@ fileinit(void)
 struct file*
 filealloc(void)
 {
-  struct file *f;
+  // struct file *f;
 
   acquire(&ftable.lock);
-  for(f = ftable.file; f < ftable.file + NFILE; f++){
-    if(f->ref == 0){
-      f->ref = 1;
-      release(&ftable.lock);
-      return f;
-    }
+  ftable.file = bd_malloc(sizeof(struct file));
+  memset(ftable.file, 0, sizeof(struct file));
+  if ((ftable.file)->ref == 0)
+  {
+    (ftable.file)->ref = 1;
   }
+  // for(f = ftable.file; f < ftable.file + NFILE; f++){
+  //   if(f->ref == 0){
+  //     f->ref = 1;
+  //     release(&ftable.lock);
+  //     return f;
+  //   }
+  // }
   release(&ftable.lock);
-  return 0;
+  // return 0;
+  return ftable.file;
 }
 
 // Increment ref count for file f.
@@ -71,6 +79,7 @@ fileclose(struct file *f)
   ff = *f;
   f->ref = 0;
   f->type = FD_NONE;
+  bd_free(f);
   release(&ftable.lock);
 
   if(ff.type == FD_PIPE){
